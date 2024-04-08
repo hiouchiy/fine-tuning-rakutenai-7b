@@ -1,1 +1,1 @@
-# fine-tuning-rakutenai-7b
+# LLM Fine-tuning sample code for RakutenAI-7b
