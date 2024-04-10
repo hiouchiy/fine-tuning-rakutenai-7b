@@ -88,6 +88,58 @@ deepspeed_config = {
       "stage": 3,
       "overlap_comm": True,
       "contiguous_gradients": True,
+      "sub_group_size": 1e9,
+      "reduce_bucket_size": "auto",
+      "stage3_prefetch_bucket_size": "auto",
+      "stage3_param_persistence_threshold": "auto",
+      "stage3_max_live_parameters": 1e9,
+      "stage3_max_reuse_distance": 1e9,
+      "stage3_gather_16bit_weights_on_model_save": True
+    },
+    "gradient_accumulation_steps": "auto",
+    "gradient_clipping": "auto",
+    "steps_per_print": 2000,
+    "train_batch_size": "auto",
+    "train_micro_batch_size_per_gpu": "auto",
+    "wall_clock_breakdown": False
+}
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC 以下のConfigはZeROのCPU OffloadingをONにしている設定になります。したがって、A10などの内蔵メモリーが小さいGPUを使用する場合にご利用ください。
+
+# COMMAND ----------
+
+# DBTITLE 1,[Backup] ZeRO CPU Offloading使用版
+deepspeed_config = {
+    "fp16": {
+      "enabled": False
+    },
+    "bf16": {
+      "enabled": True
+    },
+    "optimizer": {
+      "type": "AdamW",
+      "params": {
+        "lr": "auto",
+        "betas": "auto",
+        "eps": "auto",
+        "weight_decay": "auto"
+      }
+    },
+    "scheduler": {
+      "type": "WarmupLR",
+      "params": {
+        "warmup_min_lr": "auto",
+        "warmup_max_lr": "auto",
+        "warmup_num_steps": "auto"
+      }
+    },
+    "zero_optimization": {
+      "stage": 3,
+      "overlap_comm": True,
+      "contiguous_gradients": True,
       "sub_group_size": 5e7,
       "reduce_bucket_size": "auto",
       "reduce_scatter": True,
@@ -118,13 +170,16 @@ deepspeed_config = {
 # MAGIC %md
 # MAGIC ## トレーニング関数を定義する
 # MAGIC
-# MAGIC データセットは[yulanfmy/databricks-qa-ja](https://huggingface.co/datasets/yulanfmy/databricks-qa-ja)（データブリックス関連のQAデータ）を使用します。
+# MAGIC データセットは下記二つのうちのいずれかを使用します。
+# MAGIC - [yulanfmy/databricks-qa-ja](https://huggingface.co/datasets/yulanfmy/databricks-qa-ja)（データブリックス関連のQAデータです。１５００件ほど。A100x4で学習時間は1時間ほど。）
+# MAGIC - [bbz662bbz/databricks-dolly-15k-ja-gozarinnemon](https://huggingface.co/datasets/bbz662bbz/databricks-dolly-15k-ja-gozarinnemon)(語尾を必ず「ござる」で終わらせるテキストデータです。ややふざけているようですが、ファインチューニングの効果がわかりやすいデータセットです。15000件ほど。A100x4で学習時間は30時間ほど。)
 
 # COMMAND ----------
 
 MODEL_PATH = "Rakuten/RakutenAI-7B-chat"
 TOKENIZER_PATH = "Rakuten/RakutenAI-7B-chat"
 DEFAULT_TRAINING_DATASET = "yulanfmy/databricks-qa-ja"
+# DEFAULT_TRAINING_DATASET = "bbz662bbz/databricks-dolly-15k-ja-gozarinnemon"
 LOCAL_OUTPUT_DIR = "/dbfs/RakutenAI-7B-chat/output"
 DEFAULT_SEED = 68
 
@@ -164,6 +219,13 @@ args = HFTrainingArguments()
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC データセットの準備。
+# MAGIC
+# MAGIC 使用するデータセットに応じて_reformat_data関数を編集ください。
+
+# COMMAND ----------
+
 def get_tokenizer(
     pretrained_name_or_path: str = TOKENIZER_PATH,
 ) -> PreTrainedTokenizer:
@@ -188,10 +250,17 @@ def load_training_dataset(
     print(f"Found {dataset.num_rows} rows")
 
     def _reformat_data(rec):
+        #################### "yulanfmy/databricks-qa-ja"の場合はこちら　####################
         if rec["context"]:
             return f"""Below is an instruction that describes a task. Write a response in Japanese that appropriately completes the request. USER:{rec["instruction"]} INPUT:{rec["context"]} ASSISTANT:{rec["response"]}""" 
         else:
             return f"""Below is an instruction that describes a task. Write a response in Japanese that appropriately completes the request. USER:{rec["instruction"]} ASSISTANT:{rec["response"]}"""
+        
+        #################### "bbz662bbz/databricks-dolly-15k-ja-gozarinnemon"の場合はこちら　####################
+        # if rec["input"]:
+        #     return f"""Below is an instruction that describes a task. Write a response in Japanese that appropriately completes the request. USER:{rec["instruction"]} INPUT:{rec["input"]} ASSISTANT:{rec["output"]}""" 
+        # else:
+        #     return f"""Below is an instruction that describes a task. Write a response in Japanese that appropriately completes the request. USER:{rec["instruction"]} ASSISTANT:{rec["output"]}"""
 
     def tokenize_function(allEntries):
         return tokenizer(
@@ -213,7 +282,7 @@ def load_training_dataset(
         return {"input_ids": input_batch, "attention_mask": attention_masks}
 
     dataset = dataset.map(tokenize_function)
-    split_dataset = dataset.train_test_split(test_size=200, seed=seed)
+    split_dataset = dataset.train_test_split(test_size=0.2, shuffle=True, seed=seed)
     train_tokenized_dataset = split_dataset['train']
     eval_tokenized_dataset = split_dataset['test']
 
@@ -339,8 +408,7 @@ model = AutoModelForCausalLM.from_pretrained(args.final_model_output_path, torch
 model.eval()
 
 requests = [
-    "「馬が合う」はどう言う意味ですか",
-    "How to make an authentic Spanish Omelette?",
+    "スマホが人間に与える害についてに簡潔に教えてください。",
 ]
 
 system_message = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {user_input} ASSISTANT:"
