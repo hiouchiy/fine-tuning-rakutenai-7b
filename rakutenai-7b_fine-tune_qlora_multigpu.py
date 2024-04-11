@@ -8,7 +8,7 @@
 # MAGIC
 # MAGIC このノートブックの環境
 # MAGIC - ランタイム: 15.0 LTS GPU ML Runtime
-# MAGIC - インスタンス: Azure上の`Standard_NC24ads_A100_v4`。
+# MAGIC - インスタンス: Azure上の`Standard_NC96ads_A100_v4`。
 # MAGIC
 # MAGIC Hugging FaceのPEFTライブラリと、よりメモリ効率の良い微調整のためにQLoRAを活用しています。
 
