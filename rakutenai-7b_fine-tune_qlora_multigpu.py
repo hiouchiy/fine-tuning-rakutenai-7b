@@ -2,15 +2,15 @@
 # MAGIC %md
 # MAGIC # QLoRAでRakutenAI-7B-chatをマルチGPUでデータ並列にファインチューニングする
 # MAGIC
-# MAGIC [RakutenAI-7B-chat](https://huggingface.co/Rakuten/RakutenAI-7B-chat)大規模言語モデル(LLM)は、70億個のパラメータを持つインストラクション・チューニングされた生成テキストモデルです。このモデルはMistral-7B-v0.1に基づいており、すべてのベンチマークでLlama 2 13Bを凌駕しています。
+# MAGIC [RakutenAI-7B-chat](https://huggingface.co/Rakuten/RakutenAI-7B-chat)は70億個のパラメータを持つインストラクション・チューニングされた文章生成モデルです。このモデルはMistral-7B-v0.1をベースとして日本語のデータセットで追加事前学習されております。
 # MAGIC
-# MAGIC このノートブックは、[bbz662bbz/databricks-dolly-15k-ja-gozarinnemon](https://huggingface.co/datasets/bbz662bbz/databricks-dolly-15k-ja-gozarinnemon)データセット上で[RakutenAI-7B-chat](https://huggingface.co/Rakuten/RakutenAI-7B-chat)モデルを微調整するためのものです。
+# MAGIC このノートブックは、[bbz662bbz/databricks-dolly-15k-ja-gozarinnemon](https://huggingface.co/datasets/bbz662bbz/databricks-dolly-15k-ja-gozarinnemon)データセットを用いて[RakutenAI-7B-chat](https://huggingface.co/Rakuten/RakutenAI-7B-chat)モデルをファインチューニングします。
 # MAGIC
 # MAGIC このノートブックの環境
 # MAGIC - ランタイム: 15.0 LTS GPU ML Runtime
-# MAGIC - インスタンス: Azure上の`Standard_NC96ads_A100_v4`。
+# MAGIC - インスタンス: Azure上の`Standard_NC96ads_A100_v4` (A100 × 4)
 # MAGIC
-# MAGIC Hugging FaceのPEFTライブラリと、よりメモリ効率の良い微調整のためにQLoRAを活用しています。
+# MAGIC Hugging FaceのPEFTライブラリと、よりメモリ効率の良いファインチューニングのためにQLoRAを活用しています。さらに、Torch Distributerを用いたマルチGPU上でのデータ並列な分散学習を用いて学習時間を大幅に短縮します。
 
 # COMMAND ----------
 
@@ -120,7 +120,7 @@ train_tokenized_dataset["text"][0]
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC それではモデルを訓練してみましょう！
+# MAGIC それではモデルを訓練するための`train_model`関数を定義しましょう。
 
 # COMMAND ----------
 
@@ -248,6 +248,11 @@ def train_model():
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Torch Distributerのインスタンスを作成し、使用するGPUと同じ数のプロセスを作成する。
+
+# COMMAND ----------
+
 from pyspark.ml.torch.distributor import TorchDistributor
  
 best_model_checkpoint = TorchDistributor(
@@ -292,11 +297,9 @@ streamer = TextStreamer(
 
 # COMMAND ----------
 
-
-
 prompt = """Below is an instruction that describes a task. Write a response that appropriately completes the request. 
-### USER:　肺がんの特徴を簡潔に教えてください。 
-### ASSISTANT:"""
+USER:　肺がんの特徴を簡潔に教えてください。 
+ASSISTANT:"""
 batch = tokenizer(prompt, add_special_tokens=True, return_tensors='pt').to('cuda')
 
 with torch.cuda.amp.autocast():
@@ -325,7 +328,7 @@ print(generated_text)
 import torch
 from peft import PeftModel, PeftConfig
 
-peft_model_id = model_output_location
+peft_model_id = best_model_checkpoint
 config = PeftConfig.from_pretrained(peft_model_id)
 
 from huggingface_hub import snapshot_download
