@@ -7,7 +7,7 @@
 # MAGIC このノートブックは、[bbz662bbz/databricks-dolly-15k-ja-gozarinnemon](https://huggingface.co/datasets/bbz662bbz/databricks-dolly-15k-ja-gozarinnemon)データセット上で[RakutenAI-7B-chat](https://huggingface.co/Rakuten/RakutenAI-7B-chat)モデルを微調整するためのものです。
 # MAGIC
 # MAGIC このノートブックの環境
-# MAGIC - ランタイム: 14.3 LTS GPU ML Runtime
+# MAGIC - ランタイム: 15.0 GPU ML Runtime
 # MAGIC - インスタンス: Azure上の`Standard_NC24ads_A100_v4`。
 # MAGIC
 # MAGIC Hugging FaceのPEFTライブラリと、よりメモリ効率の良い微調整のためにQLoRAを活用しています。

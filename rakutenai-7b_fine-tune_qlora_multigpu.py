@@ -4,13 +4,25 @@
 # MAGIC
 # MAGIC [RakutenAI-7B-chat](https://huggingface.co/Rakuten/RakutenAI-7B-chat)は70億個のパラメータを持つインストラクション・チューニングされた文章生成モデルです。このモデルはMistral-7B-v0.1をベースとして日本語のデータセットで追加事前学習されております。
 # MAGIC
-# MAGIC このノートブックは、[bbz662bbz/databricks-dolly-15k-ja-gozarinnemon](https://huggingface.co/datasets/bbz662bbz/databricks-dolly-15k-ja-gozarinnemon)データセットを用いて[RakutenAI-7B-chat](https://huggingface.co/Rakuten/RakutenAI-7B-chat)モデルをファインチューニングします。
+# MAGIC このノートブックでは、[bbz662bbz/databricks-dolly-15k-ja-gozarinnemon](https://huggingface.co/datasets/bbz662bbz/databricks-dolly-15k-ja-gozarinnemon)データセットを用いて[RakutenAI-7B-chat](https://huggingface.co/Rakuten/RakutenAI-7B-chat)モデルをファインチューニングします。
 # MAGIC
 # MAGIC このノートブックの環境
 # MAGIC - ランタイム: 15.0 LTS GPU ML Runtime
 # MAGIC - インスタンス: Azure上の`Standard_NC96ads_A100_v4` (A100 × 4)
 # MAGIC
 # MAGIC Hugging FaceのPEFTライブラリと、よりメモリ効率の良いファインチューニングのためにQLoRAを活用しています。さらに、Torch Distributerを用いたマルチGPU上でのデータ並列な分散学習を用いて学習時間を大幅に短縮します。
+# MAGIC
+# MAGIC # Fine tuning RakutenAI-7B-chat with QLoRA on multiple GPUs in data parallel.
+# MAGIC
+# MAGIC [RakutenAI-7B-chat](https://huggingface.co/Rakuten/RakutenAI-7B-chat) is an instruction-tuned text generation model with 7 billion parameters. The model is based on Mistral-7B-v0.1 and has been additionally pre-trained on a Japanese dataset.
+# MAGIC
+# MAGIC In this notebook, [bbz662bbz/databricks-dolly-15k-ja-gozarinnemon](https://huggingface.co/datasets/bbz662bbz/databricks-dolly-15k-ja- gozarinnemon) dataset is used to fine-tune the [RakutenAI-7B-chat](https://huggingface.co/Rakuten/RakutenAI-7B-chat) model.
+# MAGIC
+# MAGIC Environment for this notebook
+# MAGIC - Runtime: 15.0 LTS GPU ML Runtime
+# MAGIC - Instance: `Standard_NC96ads_A100_v4` (A100 x 4) on Azure
+# MAGIC
+# MAGIC We utilize Hugging Face's PEFT library and QLoRA for more memory efficient fine tuning. In addition, we use data-parallel distributed learning on multiple GPUs with Torch Distributer to reduce training time.
 
 # COMMAND ----------
 
@@ -18,6 +30,10 @@
 # MAGIC ## 必要なパッケージのインストール
 # MAGIC
 # MAGIC 以下のセルを実行して、必要なライブラリをセットアップしてインストールする。今回の実験では、最近の[`SFTTrainer`](https://huggingface.co/docs/trl/main/en/sft_trainer)を活用するために、`accelerate`, `peft`, `transformers`, `datasets` とTRLが必要である。bitsandbytes`を使用して、ベースモデルを4bitに量子化する](https://huggingface.co/blog/4bit-transformers-bitsandbytes)。
+# MAGIC
+# MAGIC ## Install required packages
+# MAGIC
+# MAGIC Run the following cell to set up and install the required libraries. For this experiment, in order to take advantage of the recent [`SFTTrainer`](https://huggingface.co/docs/trl/main/en/sft_trainer), we need `accelerate`, `peft`, `transformers`, ` datasets` and `trl` are needed to quantize the base model to 4 bits using [`bitsandbytes`](https://huggingface.co/blog/4bit-transformers-bitsandbytes).
 
 # COMMAND ----------
 
@@ -26,7 +42,7 @@
 
 # COMMAND ----------
 
-# パラメータを定義
+# Define some parameters
 model_output_location = "/local_disk0/rakutenai-7b-lora-fine-tune"
 local_output_dir = "/local_disk0/results"
 
@@ -36,9 +52,8 @@ revision = "b54331c1376938325bdcf6a61f48f171fd8b1594"
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## データセット
-# MAGIC
-# MAGIC [bbz662bbz/databricks-dolly-15k-ja-gozarinnemon](https://huggingface.co/datasets/bbz662bbz/databricks-dolly-15k-ja-gozarinnemon)データセットを使用する。
+# MAGIC ## Dataset
+# MAGIC [bbz662bbz/databricks-dolly-15k-ja-gozarinnemon](https://huggingface.co/datasets/bbz662bbz/databricks-dolly-15k-ja-gozarinnemon)
 
 # COMMAND ----------
 
@@ -50,7 +65,7 @@ dataset = load_dataset(dataset_name, split="train")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## プロンプトのフォーマット
+# MAGIC ## Formatting prompt
 
 # COMMAND ----------
 
@@ -110,17 +125,22 @@ eval_tokenized_dataset = split_dataset['test']
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Let's check one of the prompts.
+
+# COMMAND ----------
+
 train_tokenized_dataset["text"][0]
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## モデルをトレーニングする
+# MAGIC ## Train the model
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC それではモデルを訓練するための`train_model`関数を定義しましょう。
+# MAGIC Define `train_model` function
 
 # COMMAND ----------
 
@@ -167,7 +187,7 @@ def train_model():
       quantization_config=bnb_config,
       revision=revision,
       trust_remote_code=True,
-      device_map={'': PartialState().process_index} # ポイントはここ。各GPUにモデルのコピーをロードする。
+      device_map={'': PartialState().process_index} # Here is the most important. Load a copy of the model onto each GPU.
   )
   model.config.use_cache = False
 
@@ -249,7 +269,7 @@ def train_model():
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Torch Distributerのインスタンスを作成し、使用するGPUと同じ数のプロセスを作成する。
+# MAGIC Create an instance of Torch Distributer and create the same number of processes as GPUs to be used.
 
 # COMMAND ----------
 
@@ -265,7 +285,7 @@ print("The best model checkpoint is saved in " + best_model_checkpoint)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## モデルを保存する
+# MAGIC ## Test the trained model
 
 # COMMAND ----------
 
@@ -288,11 +308,11 @@ base_model = AutoModelForCausalLM.from_pretrained(
 model = PeftModel.from_pretrained(base_model, peft_model_id)
 model.eval()
 
-# ストリーマーを定義
+# output streamer
 streamer = TextStreamer(
     tokenizer,
-    skip_prompt=False, # 入力文(ユーザーのプロンプトなど)を出力するかどうか
-    skip_special_tokens=False, # その他のデコード時のオプションもここで渡す
+    skip_prompt=False,
+    skip_special_tokens=False, 
 )
 
 # COMMAND ----------
@@ -321,7 +341,7 @@ print(generated_text)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## ファインチューニングしたモデルをMLFlowに記録する
+# MAGIC ## Log the trained model into MLFlow
 
 # COMMAND ----------
 
@@ -407,7 +427,7 @@ with mlflow.start_run() as run:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC MLFlowに記録されたモデルでモデル推論を実行する
+# MAGIC Infer with the logged model 
 
 # COMMAND ----------
 
